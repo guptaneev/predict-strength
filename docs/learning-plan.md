@@ -331,38 +331,50 @@ the metric to measure it with.
    current total, plus whatever they've *typically* changed by in their past meets. For
    a lifter on their very first recorded transition (no past changes to look at yet):
    fall back to the average change across everyone.
-3. **Create `src/models/baseline.py` with a class `BaselineModel`.** It needs two
-   pieces: one computed directly from each row (no "fitting" required, since it only
-   ever looks at that one lifter's own earlier meets), and one that genuinely has to be
-   learned from the training set (the population average, since that's a statistic
-   about the whole group, not any single lifter).
-4. **Add a `delta` column to `pairs_df`** — the size of *this* transition:
-   `pairs_df['delta'] = pairs_df['next_TotalKg'] - pairs_df['TotalKg']`. (Same quantity
-   as your prediction target, just expressed as a change instead of an absolute total.)
-5. **Add an `avg_past_delta` column** — for each row, the average of that *same
-   lifter's* delta values from transitions strictly *before* this one (never including
-   the current row's own delta — using the answer to predict itself would be leakage,
-   the same mistake Phase 0 is about, just showing up inside a single lifter's history
-   instead of across the train/test boundary):
+3. **Create `src/models/baseline.py`.** It needs a class `BaselineModel`, plus a small
+   *module-level helper function*, `_add_delta_features(df) -> pd.DataFrame`, that steps
+   4-5 below will fill in. This helper lives in `baseline.py`, not `pairs.py` — `pairs.py`
+   is Phase 0's concern only (building pairs, doing the leakage-safe split), and
+   `delta`/`avg_past_delta` are this specific baseline's own invention, not a property of
+   "pairs" in general. `fit()` and `predict()` will each call this helper internally
+   (steps 7-8), so anyone using `BaselineModel` just passes in the raw pairs dataframe
+   and never needs to know these columns exist.
+4. **Inside `_add_delta_features`, add a `delta` column** — the size of *this*
+   transition: `df['delta'] = df['next_TotalKg'] - df['TotalKg']`. (Same quantity as
+   your prediction target, just expressed as a change instead of an absolute total.)
+5. **In the same function, add an `avg_past_delta` column** — for each row, the average
+   of that *same lifter's* delta values from transitions strictly *before* this one
+   (never including the current row's own delta — using the answer to predict itself
+   would be leakage, the same mistake Phase 0 is about, just showing up inside a single
+   lifter's history instead of across the train/test boundary):
    ```python
-   pairs_df['avg_past_delta'] = (
-       pairs_df.groupby('Name')['delta']
-       .transform(lambda s: s.shift(1).expanding().mean())
-   )
+   def _add_delta_features(df):
+       df = df.copy()
+       df['delta'] = df['next_TotalKg'] - df['TotalKg']
+       df['avg_past_delta'] = (
+           df.groupby('Name')['delta']
+           .transform(lambda s: s.shift(1).expanding().mean())
+       )
+       return df
    ```
-   Two things are happening in that one line: `.shift(1)` moves each lifter's delta
-   values down by one row, so row *i* sees row *i-1*'s delta instead of its own;
-   `.expanding().mean()` then averages everything seen so far at each point — combined
-   with the shift, that gives you "the average of this lifter's deltas strictly before
-   the current one." A lifter's very first row will have nothing to shift in, so
-   `avg_past_delta` is `NaN` there — expected, and exactly the case step 7 handles.
-6. **Verify step 5 by hand before moving on**: pick a lifter with 3+ transitions in your
-   data, and manually check that their 3rd row's `avg_past_delta` equals the plain
-   average of their 1st and 2nd rows' `delta` values.
-7. **Write `BaselineModel.fit(self, train_df)`**: store the population average delta as
-   a plain instance attribute — `self.population_avg_delta = train_df['delta'].mean()`.
-   This one number is the only thing genuinely "learned" from training data here.
+   Two things are happening in the `avg_past_delta` line: `.shift(1)` moves each
+   lifter's delta values down by one row, so row *i* sees row *i-1*'s delta instead of
+   its own; `.expanding().mean()` then averages everything seen so far at each point —
+   combined with the shift, that gives you "the average of this lifter's deltas
+   strictly before the current one." A lifter's very first row will have nothing to
+   shift in, so `avg_past_delta` is `NaN` there — expected, and exactly the case step 8
+   handles. (The `df.copy()` avoids silently mutating whatever dataframe was passed in —
+   worth doing any time a function modifies columns on data it didn't create itself.)
+6. **Verify step 5 by hand before moving on**: call `_add_delta_features` directly on a
+   small dataframe for one lifter with 3+ transitions, and manually check that their 3rd
+   row's `avg_past_delta` equals the plain average of their 1st and 2nd rows' `delta`
+   values.
+7. **Write `BaselineModel.fit(self, train_df)`**:
+   - `train_df = _add_delta_features(train_df)`
+   - `self.population_avg_delta = train_df['delta'].mean()` — the one number that's
+     genuinely "learned" from training data here.
 8. **Write `BaselineModel.predict(self, df)`**:
+   - `df = _add_delta_features(df)`
    - `predicted_delta = df['avg_past_delta'].fillna(self.population_avg_delta)` (use
      the lifter's own average where it exists, the population average where it's `NaN`)
    - `return df['TotalKg'] + predicted_delta`
@@ -375,19 +387,22 @@ the metric to measure it with.
 
    df = load_clean_data()
    pairs = build_meet_pairs(df)
-   # add the delta / avg_past_delta columns here (steps 4-5), or inside
-   # build_meet_pairs itself if you'd rather keep that logic in one place
    train_df, test_df = train_test_split_by_lifter(pairs)
 
    model = BaselineModel()
-   model.fit(train_df)
-   predictions = model.predict(test_df)
+   model.fit(train_df)          # internally adds delta / avg_past_delta to train_df
+   predictions = model.predict(test_df)   # internally adds them to test_df too
 
    print(mae(test_df['next_TotalKg'], predictions))
    ```
+   Notice this script never mentions `delta` or `avg_past_delta` at all — that's the
+   payoff of step 3's decision to keep that logic inside `BaselineModel`.
 10. **Run it**: `python scripts/01_baseline.py` from the project root. Whatever MAE
     prints out is your yardstick number — write it down somewhere, you'll compare every
     future model against it.
+  
+  ### 38.45 kgs
+
 11. **Before moving to Phase 2, answer this (no code needed):** what MAE would a
     "predict zero change" baseline get, versus your historical-average baseline? Which
     of the two is the fairer thing to compare your real model against later, and why?
