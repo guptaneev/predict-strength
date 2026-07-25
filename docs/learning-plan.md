@@ -450,47 +450,69 @@ There are two different ways to find those weights, and you'll implement both:
    wrong it is, and nudge the weights a little in the direction that reduces the error
    (the gradient), repeating thousands of times until it converges.
 
-### Build yourself, in this order
-1. **On paper, before any code:** derive the gradient of the squared-error loss with
-   respect to the weights. This is one application of the chain rule (the calculus rule
-   for taking derivatives of "functions of functions"). Don't skip this step — typing
-   out the derivative in code without having derived it on paper is the single most
-   common way to fake-understand this phase.
-2. Implement the **normal equation** with raw numpy. Hint structure (fill in the numpy
-   calls yourself):
-   - build your feature matrix `X` (don't forget a column of 1s for the bias/intercept term)
-   - compute `Xᵀ X`, invert it, multiply by `Xᵀ y`
-   - Validate: compare your weights against `sklearn.linear_model.LinearRegression` on
-     the same toy data — they should match to several decimal places.
-3. Implement **gradient descent** from scratch. Hint structure:
-   - start with weights at zero (or small random values)
-   - loop: compute predictions → compute the gradient (your paper derivation from step 1)
-     → update weights by `weights -= learning_rate * gradient` → repeat
-   - track the loss value each iteration in a list, and plot it (ask AI for the
-     matplotlib boilerplate — this part isn't a learning task) — you should see it
-     decrease and flatten out.
-4. **Deliberately break it**: run gradient descent with one unscaled feature sitting next
-   to a small-scale one (e.g., raw `days_since_last_meet`, which can be in the hundreds,
-   next to `age`). Watch it converge slowly or diverge entirely. Seeing this failure
-   firsthand is the fastest way to actually internalize *why* feature scaling matters,
-   rather than just accepting it as a rule.
+### Step-by-step
 
-### Where the code goes
-- Create `src/models/linear_regression.py` with a class `LinearRegressionScratch`
-  matching the `fit(X, y)` / `predict(X)` interface from Phase 1's baseline. Give it a
-  `method="normal_equation"` vs. `method="gradient_descent"` option (or two separate
-  classes if that's clearer to you) so both approaches from steps 2 and 3 above live
-  side by side and you can compare them directly.
-- Create `tests/test_linear_regression.py` — this is where the "compare against sklearn
-  on synthetic data" validation from steps 2/3 becomes a real, permanent pytest test
-  (`def test_normal_equation_matches_sklearn(): ...`) instead of a one-off print
-  statement you'll forget about. Every from-scratch model in this plan gets a test file
-  like this — it's the automated version of "did I actually implement this correctly."
-- Do the cost-curve plot and the "break it with unscaled features" experiment (step 4)
-  in `scripts/02_linear_regression.py` — this is exploratory/visual (save plots with
-  `plt.savefig("outputs/...")`), so it belongs in a throwaway script, not `src/`.
-- In Phase 3 you'll import `LinearRegressionScratch` from this file again to build the
-  trend-slope feature — this file doesn't get thrown away after this phase.
+This phase gets less hand-fed than Phases 0-1 on purpose — translating math into numpy
+is the actual exercise, so the steps below tell you *what* to build and *where*, and
+give you the formulas and function names to look up, but leave assembling the actual
+lines of code to you.
+
+1. **Create `src/models/linear_regression.py`** with a class `LinearRegressionScratch`,
+   matching the `fit(X, y)` / `predict(X)` interface every other model in this plan uses.
+   Give it a constructor argument like `method="normal_equation"` vs.
+   `method="gradient_descent"` (or split into two classes if that reads more cleanly to
+   you) so both approaches below live side by side and you can compare them directly.
+2. **On paper, before any code:** derive the gradient of the squared-error loss with
+   respect to the weights. This is one application of the chain rule. Don't skip it —
+   typing a gradient-descent update rule into code without having derived it on paper
+   first is the single most common way to fake-understand this phase. (Use the "AI use"
+   prompt below to check your derivation once you've done it — don't ask for the
+   derivation itself.)
+3. **Implement the normal equation** inside `fit()`. You need: a feature matrix `X` with
+   an extra column of 1s prepended or appended (this is what lets the model learn a bias
+   term `b`, not just weights on your real features — look up `np.hstack` or
+   `np.column_stack` for adding that column), then the formula `w = (XᵀX)⁻¹ Xᵀy` —
+   look up `np.transpose` (or the `.T` attribute), the `@` operator for matrix
+   multiplication, and `np.linalg.inv`. Store the resulting weight vector as
+   `self.weights`. `predict()` is then just `X @ self.weights` (with the same bias
+   column added first).
+4. **Validate step 3** in `scripts/02_linear_regression.py`: fit your class and
+   `sklearn.linear_model.LinearRegression` on the same small dataset, print both sets of
+   coefficients, and confirm they match to several decimal places. Don't move on until
+   they do.
+5. **Implement gradient descent** as the other branch of `fit()`. The loop shape:
+   initialize `self.weights` to zeros (or small random values), then repeat for
+   `n_iterations`: compute current predictions, compute the gradient using the formula
+   you derived in step 2 (it will be some function of `X`, the true `y`, and your current
+   predictions), update `self.weights -= learning_rate * gradient`. Add
+   `learning_rate` and `n_iterations` as constructor arguments. Also append the current
+   loss value to a list (e.g. `self.loss_history`) on every iteration — you'll need it
+   for step 7.
+6. **Validate step 5**: on the same small dataset from step 4, confirm gradient descent
+   converges to weights close to (not necessarily identical to) the normal equation's
+   exact answer. If it doesn't get close after a reasonable number of iterations, that's
+   almost always a sign of a gradient sign error or a learning rate that's too large —
+   check your paper derivation before touching the code.
+7. **Plot `self.loss_history`** (`plt.plot`, then `plt.savefig("outputs/...")`) in
+   `scripts/02_linear_regression.py` — confirm by eye that it decreases and flattens.
+8. **Deliberately break it**: in the same script, refit gradient descent with one
+   unscaled feature sitting next to a small-scale one (e.g., raw `days_since_last_meet`,
+   which can be in the hundreds, next to `age`). Watch it converge slowly or diverge.
+   Seeing this failure firsthand is the fastest way to internalize *why* feature scaling
+   matters, rather than accepting it as a rule someone told you.
+9. **Write `tests/test_linear_regression.py`**: turn step 4's manual comparison into a
+   real pytest test that asserts your normal-equation weights are close to sklearn's
+   (`numpy.allclose` is the tool for "close enough" float comparisons, not `==`). Every
+   from-scratch model in this plan gets a test file like this.
+10. **Before moving to Phase 3**, answer these (no code needed):
+    - Write the normal equation from memory, without looking it up.
+    - In one sentence: why does gradient descent need a learning rate, but the normal
+      equation doesn't need any hyperparameter at all?
+    - Why does the normal equation become impractical with a very large number of
+      features (hint: think about the cost of inverting a matrix as it grows)?
+
+Note for later: in Phase 3, you'll import `LinearRegressionScratch` from this exact file
+to build the trend-slope feature — it doesn't get thrown away after this phase.
 
 ### Resources
 - **Andrew Ng's "Machine Learning Specialization"** (Coursera, free to audit) — the
@@ -509,13 +531,6 @@ There are two different ways to find those weights, and you'll implement both:
 - "Generate a 20-row synthetic dataset with a known linear relationship and some noise,
   so I can confirm my normal equation recovers coefficients close to the true ones."
 - Do **not** ask AI to write `fit()` / `predict()` for you — that's the entire exercise.
-
-### Self-check
-- Write the normal equation from memory, without looking it up.
-- In one sentence: why does gradient descent need a learning rate, but the normal
-  equation doesn't need any hyperparameter at all?
-- Why does the normal equation become impractical with a very large number of features
-  (hint: think about the cost of inverting a matrix as it grows)?
 
 ---
 

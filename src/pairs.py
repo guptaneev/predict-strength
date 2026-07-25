@@ -16,7 +16,7 @@ def build_meet_pairs(df):
         df.groupby('Name')['delta']
         .transform(lambda s: s.shift(1).expanding().mean())
     )
-            
+
     return df
 
 def train_test_split_by_lifter(pairs_df, test_size=0.2, random_state=42):
