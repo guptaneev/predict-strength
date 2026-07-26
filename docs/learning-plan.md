@@ -474,37 +474,61 @@ lines of code to you.
    `np.column_stack` for adding that column), then the formula `w = (XᵀX)⁻¹ Xᵀy` —
    look up `np.transpose` (or the `.T` attribute), the `@` operator for matrix
    multiplication, and `np.linalg.inv`. Store the resulting weight vector as
-   `self.weights`. `predict()` is then just `X @ self.weights` (with the same bias
-   column added first).
-4. **Validate step 3** in `scripts/02_linear_regression.py`: fit your class and
+   `self.weights`.
+4. **Implement `predict(self, X)`**: add the same bias column you added in `fit()`
+   (`np.hstack`/`np.column_stack` again), then return `feature_matrix @ self.weights`.
+   Notice this doesn't need to branch on `self.method` at all — by the time `predict()`
+   runs, `self.weights` already exists and is just a plain array of numbers; it doesn't
+   matter whether the normal equation or gradient descent produced it. Prediction is the
+   *same operation* either way. If you find yourself writing
+   `if self.method == "normal_equation": ...` inside `predict()`, that's a sign to
+   delete the branch — it'll silently break (return `None`) the moment you add gradient
+   descent as a second `fit()` path, since nothing would handle the other branch there.
+5. **Validate steps 3-4** in `scripts/02_linear_regression.py`: fit your class and
    `sklearn.linear_model.LinearRegression` on the same small dataset, print both sets of
    coefficients, and confirm they match to several decimal places. Don't move on until
    they do.
-5. **Implement gradient descent** as the other branch of `fit()`. The loop shape:
+
+   ### [0.949, -0.196, 43.58] MAE: 33.4kg.
+
+6. **Implement gradient descent** as the other branch of `fit()`. The loop shape:
    initialize `self.weights` to zeros (or small random values), then repeat for
    `n_iterations`: compute current predictions, compute the gradient using the formula
    you derived in step 2 (it will be some function of `X`, the true `y`, and your current
    predictions), update `self.weights -= learning_rate * gradient`. Add
    `learning_rate` and `n_iterations` as constructor arguments. Also append the current
    loss value to a list (e.g. `self.loss_history`) on every iteration — you'll need it
-   for step 7.
-6. **Validate step 5**: on the same small dataset from step 4, confirm gradient descent
+   for step 8. (No changes to `predict()` needed — see why in step 4.)
+7. **Validate step 6**: on the same small dataset from step 5, confirm gradient descent
    converges to weights close to (not necessarily identical to) the normal equation's
    exact answer. If it doesn't get close after a reasonable number of iterations, that's
    almost always a sign of a gradient sign error or a learning rate that's too large —
    check your paper derivation before touching the code.
-7. **Plot `self.loss_history`** (`plt.plot`, then `plt.savefig("outputs/...")`) in
+
+  ### after scaling [165.6, -5.43, 520.8] MAE: 33.4326kg.
+
+8. **Plot `self.loss_history`** (`plt.plot`, then `plt.savefig("outputs/...")`) in
    `scripts/02_linear_regression.py` — confirm by eye that it decreases and flattens.
-8. **Deliberately break it**: in the same script, refit gradient descent with one
+9. **Deliberately break it**: in the same script, refit gradient descent with one
    unscaled feature sitting next to a small-scale one (e.g., raw `days_since_last_meet`,
    which can be in the hundreds, next to `age`). Watch it converge slowly or diverge.
    Seeing this failure firsthand is the fastest way to internalize *why* feature scaling
    matters, rather than accepting it as a rule someone told you.
-9. **Write `tests/test_linear_regression.py`**: turn step 4's manual comparison into a
-   real pytest test that asserts your normal-equation weights are close to sklearn's
-   (`numpy.allclose` is the tool for "close enough" float comparisons, not `==`). Every
-   from-scratch model in this plan gets a test file like this.
-10. **Before moving to Phase 3**, answer these (no code needed):
+   - **This isn't just a demo you watch and move past — you'll actually need to fix it**
+     to get a gradient descent model whose weights are trustworthy enough to compare
+     against the normal equation. A single learning rate can't be "right" for a
+     large-scale feature (e.g. `TotalKg`, hundreds) and the bias column (always 1) at the
+     same time — one converges fine while the other barely moves in any reasonable number
+     of iterations. Standardize each feature column before fitting
+     (`(x - mean) / std`, computed from **train only**, same leakage-safety rule as
+     everywhere else — reuse train's mean/std to scale test), then compare *predictions*
+     or MAE against the normal equation rather than raw weights (scaled-feature weights
+     aren't directly comparable to unscaled ones without converting back).
+10. **Write `tests/test_linear_regression.py`**: turn step 5's manual comparison into a
+    real pytest test that asserts your normal-equation weights are close to sklearn's
+    (`numpy.allclose` is the tool for "close enough" float comparisons, not `==`). Every
+    from-scratch model in this plan gets a test file like this.
+11. **Before moving to Phase 3**, answer these (no code needed):
     - Write the normal equation from memory, without looking it up.
     - In one sentence: why does gradient descent need a learning rate, but the normal
       equation doesn't need any hyperparameter at all?
@@ -610,6 +634,15 @@ too little regularization = high variance (overfits), too much = high bias (unde
   with one term added: `w = (XᵀX + λI)⁻¹ Xᵀy`. Convince yourself why adding `λI` (λ times
   the identity matrix) shrinks the weights — it's a small, satisfying "aha" once you see
   it's a one-line change from something you already built.
+- **Scaling is required here, not optional like it was for plain linear regression.** The
+  penalty term punishes large *weights*, not large *features* — so an unscaled feature
+  with big raw values (e.g. `TotalKg`) naturally ends up with a small weight, and an
+  unscaled feature with small raw values ends up with a large weight, just from unit
+  differences, not real importance. Ridge's penalty then shrinks those unevenly: it
+  clobbers the already-small weight further and barely touches the large one, which has
+  nothing to do with which feature is actually more predictive. Standardize every
+  feature (same train-only mean/std rule as Phase 2) before fitting, every time you use
+  Ridge — this one isn't a "try it broken once" exercise.
 - Implement Ridge from scratch; validate against `sklearn.linear_model.Ridge`.
 - Run a small experiment: sweep `λ` from 0 to something large, plot train MAE and
   validation MAE at each value, and find the classic U-shaped validation curve yourself.
