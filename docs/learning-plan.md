@@ -571,28 +571,70 @@ A feature is only useful if it's built purely from information you'd actually ha
 here in a sneakier form: it's easy to accidentally compute a rolling average that
 includes the target meet itself.
 
-### Build yourself
-- Implement the "Minimal Viable Feature Set" from `feature-engineering.md` by hand:
-  `current_total`, `bodyweight`, `age`, `prev_total_change`, `meet_number`,
-  `days_since_last_meet`, `bodyweight_change`.
-- Implement the **trend slope feature** (`linear_trend_slope_last_N_meets`) using your
-  *own* Phase 2 linear regression code (fit a line through a lifter's last N totals over
-  time, take the slope) rather than reaching for `numpy.polyfit`. This is the actual
-  payoff of building linear regression by hand — you now have a real use for it.
-- For at least 3 features, write a one-line comment explaining exactly why it's
-  leakage-safe (what data would sneak in if you weren't careful about the meet-t
-  boundary?).
+### Step-by-step
 
-### Where the code goes
-Create `src/features.py` with a single function `build_features(pairs_df) -> pd.DataFrame`
-that takes the output of `src/pairs.py`'s `build_meet_pairs()` and adds each engineered
-column. Build it feature-by-feature — write one, sanity-check it in a quick script
-(print a few rows, eyeball them), add it to the function, repeat. Import
-`LinearRegressionScratch` from `src/models/linear_regression.py`
-for the trend-slope feature specifically — this is the concrete link between Phase 2 and
-Phase 3 the plan keeps mentioning. From here on, `src/pipeline.py` (Phase 10) will call
-your functions in this order: `load_clean_data()` → `build_meet_pairs()` →
-`build_features()` → `train_test_split_by_lifter()`.
+A notch harder than Phase 2: instead of every computation being fully specified, a few
+steps below hand you a precise *definition* of what to compute and the pandas tools to
+look up, but leave a real design decision to you (which direction to shift, how to
+represent "time" for a trend line, what to do when a lifter doesn't have enough history
+yet). Getting those decisions right is the actual exercise this time.
+
+1. **Create `src/features.py`** with `build_features(pairs_df) -> pd.DataFrame`. It will
+   import `LinearRegressionScratch` from `src/models/linear_regression.py` (needed in
+   step 5), and will eventually be called between `build_meet_pairs()` and
+   `train_test_split_by_lifter()` in the full pipeline. Build it one column at a time —
+   write a column, verify it in a quick script, add it to the function, move to the
+   next. Don't write all seven-plus columns before checking any of them.
+2. **Implement the straightforward Minimal Viable Feature Set columns**, one at a time.
+   For each, state to yourself exactly what before-meet-t information it uses before
+   writing the pandas — that's what determines whether it's leakage-safe:
+   - `current_total`, `bodyweight`, `age` — already sit on each row (`TotalKg`,
+     `BodyweightKg`, `Age`); rename or select them if you want cleaner names.
+   - `meet_number` — this lifter's 1-indexed count of meets up to and including meet t.
+     Look up `cumcount()` inside a `groupby` for counting position within a group.
+   - `days_since_last_meet` — the gap in days between meet t and this lifter's previous
+     meet. Phase 0 used `.shift(-1)` to pull a value one row *ahead*; this needs a value
+     one row *behind* instead, then a subtraction against the current row's own date —
+     work out which direction of shift that is.
+   - `prev_total_change` — the delta between meet t and the meet *before* it (not meet t
+     and meet t+1 — that's your target; using it here would be leakage). You built
+     almost this exact computation already in Phase 1's `_add_delta_features`; the only
+     difference is which two meets you're diffing.
+   - `bodyweight_change` — the same idea as `prev_total_change`, applied to
+     `BodyweightKg` instead of `TotalKg`.
+3. **Implement `rolling_avg_change_last_2_meets`**: for each row, the average of this
+   lifter's *previous two* `prev_total_change` values, never including the current row's
+   own. Same shape of computation as Phase 1's `avg_past_delta` (look up values from
+   earlier in a lifter's history without leaking the current row), except windowed to
+   the last 2 instead of "everything so far so far" — look up `.rolling()` for a
+   fixed-size window, as distinct from `.expanding()` which you already used for
+   "everything up to now."
+4. **Verify steps 2-3 by hand**: pick one lifter with 4+ meets, print their rows, and
+   manually confirm the trickier columns (`days_since_last_meet`,
+   `rolling_avg_change_last_2_meets` especially) against what you'd get with a
+   calculator. Don't move on until at least one real lifter checks out.
+5. **Implement `linear_trend_slope_last_N_meets`** using your own
+   `LinearRegressionScratch`. This one needs a design decision from you: for a given row
+   (meet t), you need that lifter's last N total values as `y`, and *something numeric
+   representing meet order* as `X` — plain sequence numbers (0, 1, 2, ...) or actual
+   elapsed days both work, but they produce differently-scaled slopes; pick one and be
+   able to say why. Structurally, this can't be computed with a single vectorized
+   `groupby().transform()` the way steps 2-3 could, since it needs to call your model's
+   `fit()` on a small slice of each lifter's own history rather than apply one formula
+   to every row at once — look up `groupby().apply()` (with a function you write that
+   runs once per lifter) as the tool for this. Decide and document what happens for
+   lifters with fewer than N prior meets (skip the feature, use however many meets are
+   available, or leave it `NaN`) — there's no single correct answer, but you need to
+   pick one on purpose rather than let it happen by accident.
+6. **For at least 3 features total** (mix in at least one from step 5), write a one-line
+   comment stating exactly why it's leakage-safe: which row or column would sneak in if
+   you'd gotten the meet-t boundary wrong?
+7. **Before moving to Phase 4**, answer (no code needed):
+   - Why is `linear_trend_slope` likely more informative than `prev_total_change` alone,
+     for a lifter with 4+ meets?
+   - If a lifter has exactly 2 meets total (one meet-t→meet-t+1 pair), which of your
+     features will end up `NaN`, and is that something your later models need to handle
+     explicitly, or an acceptable gap in the data?
 
 ### AI use here
 Once you've written `rolling_avg_change_last_2_meets` by hand and understand the
@@ -605,11 +647,6 @@ understand, not new concepts.
 - Your own `feature-engineering.md`, section 9 ("Feature Construction Rule") — re-read
   it after implementing 5 features; you'll likely think of an edge case it doesn't
   mention yet.
-
-### Self-check
-- Pick 3 features and explain, without checking the doc, why each is leakage-safe.
-- Why is `linear_trend_slope` likely more informative than `prev_total_change` alone,
-  for a lifter with 4+ meets?
 
 ---
 
