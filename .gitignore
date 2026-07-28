@@ -2,4 +2,3 @@ data/openpowerlifting.csv
 data/openpowerlifting_processed.csv
 __pycache__/
 *.egg-info/
-outputs/

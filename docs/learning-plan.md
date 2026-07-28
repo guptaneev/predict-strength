@@ -666,33 +666,74 @@ simpler, less overfit model, but too much `λ` underfits (the model gets too sim
 capture real patterns). Finding the right `λ` is a genuine **bias-variance tradeoff**:
 too little regularization = high variance (overfits), too much = high bias (underfits).
 
-### Build yourself
-- On paper, notice that Ridge's closed-form solution is just Phase 2's normal equation
-  with one term added: `w = (XᵀX + λI)⁻¹ Xᵀy`. Convince yourself why adding `λI` (λ times
-  the identity matrix) shrinks the weights — it's a small, satisfying "aha" once you see
-  it's a one-line change from something you already built.
-- **Scaling is required here, not optional like it was for plain linear regression.** The
-  penalty term punishes large *weights*, not large *features* — so an unscaled feature
-  with big raw values (e.g. `TotalKg`) naturally ends up with a small weight, and an
-  unscaled feature with small raw values ends up with a large weight, just from unit
-  differences, not real importance. Ridge's penalty then shrinks those unevenly: it
-  clobbers the already-small weight further and barely touches the large one, which has
-  nothing to do with which feature is actually more predictive. Standardize every
-  feature (same train-only mean/std rule as Phase 2) before fitting, every time you use
-  Ridge — this one isn't a "try it broken once" exercise.
-- Implement Ridge from scratch; validate against `sklearn.linear_model.Ridge`.
-- Run a small experiment: sweep `λ` from 0 to something large, plot train MAE and
-  validation MAE at each value, and find the classic U-shaped validation curve yourself.
+### Step-by-step
 
-### Where the code goes
-- Create `src/models/ridge.py` with `RidgeScratch`, same `fit(X, y)` / `predict(X)`
-  interface as before (you could even have it subclass or reuse pieces of
-  `LinearRegressionScratch`, since the only difference is the one added term —
-  worth trying if you want the code to visibly mirror the one-line math change).
-- Add `tests/test_ridge.py` comparing against `sklearn.linear_model.Ridge`, same pattern
-  as `tests/test_linear_regression.py`.
-- Do the λ-sweep plot in `scripts/04_ridge.py`, using `build_features()` from
-  Phase 3 and the train/test split from Phase 0 as inputs.
+Same difficulty tier as Phase 3: the formula itself is handed to you (it's one term
+added to something you already built), but applying it literally has a real conceptual
+flaw baked in — finding and fixing that flaw yourself is the actual exercise here, the
+same way Phase 3 made you work out the right `X` representation and window logic
+yourself rather than just handing you a finished formula.
+
+1. **Create `src/models/ridge.py`** with a class `RidgeScratch`, matching the
+   `fit(X, y)` / `predict(X)` interface every other model uses. Give it a constructor
+   argument for the regularization strength — note you can't literally name a variable
+   `lambda` in Python, it's a reserved keyword, so pick something like `lambda_` or
+   `alpha` (the same name sklearn uses, for what it's worth). You could have this class
+   reuse or subclass `LinearRegressionScratch`, since only the `fit()` formula changes —
+   worth trying if it appeals to you, not required.
+2. **On paper, before code:** Ridge's closed-form solution is Phase 2's normal equation
+   with one term added: `w = (XᵀX + λI)⁻¹ Xᵀy`, where `I` is the identity matrix. Here's
+   the catch, and it's the whole difficulty of this phase: applied *literally*, this
+   formula also shrinks your bias/intercept term toward zero, right alongside your real
+   feature weights. Think back to what the bias term actually represents (Phase 2: it's
+   what lets your line sit at a non-zero starting point, not a weight measuring a
+   feature's importance). Does it make conceptual sense to penalize it the same way you
+   penalize a feature weight for being "too large"? (It doesn't — standard practice
+   leaves the bias term unregularized.) `λI` is just a diagonal matrix with `λ` repeated
+   down the diagonal — given that, which *one* entry of that diagonal would you need to
+   change, and to what value, so the bias term's row/column stops being penalized while
+   every real feature weight still is?
+3. **Implement `fit()`** using your corrected version of that formula. Reuse the same
+   bias-column-building approach from `LinearRegressionScratch`.
+4. **Implement `predict()`** — think back to Phase 2's insight that `predict()` didn't
+   need to branch on which fitting method was used, since by the time it runs, the
+   weights already exist as plain numbers. Does `predict()` need to look any different
+   here at all from `LinearRegressionScratch`'s version?
+5. **Validate**: fit `RidgeScratch` and `sklearn.linear_model.Ridge` (matching `alpha`
+   values between the two) on the same small dataset, and confirm the coefficients come
+   out close. One thing to know if they *don't* match at first: sklearn's `Ridge` also
+   leaves the intercept unregularized by default — so a mismatch there points you back
+   at step 2, not at some other bug. Once it matches, turn this comparison into a real
+   `tests/test_ridge.py`, same pattern as `tests/test_linear_regression.py`.
+6. **Scaling is required here, not optional like it was for plain linear regression** —
+   and notably, this is true even for this closed-form solution, which didn't care about
+   scaling before. The penalty punishes large *weights*, not large *features*: an
+   unscaled feature with big raw values (e.g. `TotalKg`) naturally ends up with an
+   already-small weight, and Ridge's penalty then shrinks that already-small weight
+   further while barely touching a naturally-large weight on some small-scale feature —
+   which has nothing to do with which feature is actually more predictive. Standardize
+   every feature (same train-only mean/std rule as before) every time you use Ridge.
+7. **Run the λ-sweep experiment** in `scripts/04_ridge.py`, using `build_features()`
+   (Phase 3) and your train/test split (Phase 0) as inputs: fit `RidgeScratch` across a
+   range of λ values (e.g. 0, 0.1, 1, 10, 100...), record train MAE and validation MAE
+   at each (reuse `mae()` from Phase 1), and plot both against λ. You should see the
+   classic U-shaped validation curve — find the λ that minimizes validation MAE.
+8. **Before moving to Phase 5**, answer (no code needed):
+   - Sketch (roughly, on paper) train-error and validation-error curves as `λ` increases,
+     and explain what's happening in each region.
+   - Why would an L1 penalty (Lasso, not implemented here but worth knowing about) tend
+     to zero out some coefficients entirely, while Ridge's L2 penalty only shrinks them
+     toward zero?
+   - Concretely, what would go wrong with your model's predictions if you *had*
+     regularized the bias term along with everything else? (Think about a target whose
+     values are centered far from zero — like Δtotal typically isn't near 0 — and what
+     shrinking the one term that positions your predictions near that center would do.)
+
+### AI use here
+Once you've derived the corrected diagonal matrix yourself and have `RidgeScratch`
+passing its test against sklearn, it's fine to have AI scaffold the λ-sweep plotting
+loop in `scripts/04_ridge.py` — that's repetitive reporting code, not the learning core
+of this phase.
 
 ### Resources
 - ISLR, Ch. 6 — the standard, approachable treatment of Ridge/Lasso and the
@@ -700,12 +741,6 @@ too little regularization = high variance (overfits), too much = high bias (unde
 - StatQuest, "Ridge vs Lasso Regression" (YouTube) — watch this *before* the math above
   for visual intuition; StatQuest is consistently the clearest "why does this work"
   explainer for exactly these topics.
-
-### Self-check
-- Sketch (even roughly, on paper) train-error and validation-error curves as `λ`
-  increases, and explain what's happening in each region.
-- Why would an L1 penalty (Lasso, not covered above but worth knowing about) tend to zero
-  out some coefficients entirely, while Ridge's L2 penalty only shrinks them toward zero?
 
 ---
 
