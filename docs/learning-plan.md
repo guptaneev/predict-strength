@@ -766,59 +766,70 @@ a random subset of the data and features (this randomness is called **bagging** 
 bootstrap aggregating), then average their predictions. Averaging many high-variance,
 somewhat-wrong trees cancels out their individual noise and leaves the shared signal.
 
-### Build yourself
-1. Implement a **minimal regression tree from scratch** on a small toy dataset (not the
-   full powerlifting data — too slow to debug against). A recursive function that:
-   - tries splitting on each feature/threshold combination
-   - picks whichever split most reduces variance in the two resulting groups
-   - recurses on each half, stopping at a max depth or minimum group size
-2. Validate: on the same toy dataset, compare your tree's predictions against
-   `sklearn.tree.DecisionTreeRegressor` with the same max depth.
-3. Once that works, run it (or sklearn's — being realistic that a from-scratch tree on
-   3.9M rows will be painfully slow) on a small sample of your real features. Manually
-   look at a few of the splits it chose — do they make physical sense (e.g., does it
-   split on `days_since_last_meet` roughly where you'd expect)?
-4. **Don't hand-write Random Forest itself.** Wrapping bagging + random feature
-   selection around your own tree is a fine stretch goal if you're enjoying this, but
-   it's completely reasonable to use `sklearn.ensemble.RandomForestRegressor` here and
-   spend your effort on understanding *why* averaging many overfit trees reduces
-   variance — that's a statistics insight, not a coding one, and re-implementing the
-   bagging loop teaches you comparatively little once you've built one tree.
+### Step-by-step
 
-### Where the code goes
-- Create `src/models/tree.py` with a class `RegressionTreeScratch(max_depth=,
-  min_samples_leaf=)`, same `fit(X, y)` / `predict(X)` interface. Internally, a recursive
-  helper (e.g. `_best_split(X, y)` and `_build_node(X, y, depth)`) keeps the recursion
-  readable — this is a natural place to split logic into small private methods.
-- Build and debug it against the toy dataset in `scripts/05_trees.py` first — full
-  data is too slow for a from-scratch tree to iterate against while debugging.
-- Add `tests/test_tree.py`: generate a small synthetic dataset, assert your tree's
-  predictions match (or are very close to) `sklearn.tree.DecisionTreeRegressor` with
-  identical `max_depth`.
-- For Random Forest itself, no new `src/` file needed — just use
-  `sklearn.ensemble.RandomForestRegressor` directly in `scripts/05_trees.py`, called on
-  the output of `build_features()`.
+Same tier as Phases 3-4: the overall recursive shape is handed to you, but two real
+decisions are left for you to reason through rather than being pre-solved — how to
+correctly *weight* a variance-reduction comparison, and when recursion should actually
+stop.
+
+1. **Create `src/models/tree.py`** with a class `RegressionTreeScratch(max_depth=,
+   min_samples_leaf=)`, same `fit(X, y)` / `predict(X)` interface as every other model.
+   Internally, plan on two recursive helpers — something like `_best_split(X, y)` and
+   `_build_node(X, y, depth)` — splitting the logic into small private methods keeps the
+   recursion readable.
+2. **Work out the variance-reduction comparison carefully — this is the first real
+   decision point.** For a candidate split, you'll compute the variance of the target
+   within the left group and within the right group. The mistake that's easy to fall
+   into: naively averaging those two variances treats a split that makes one *tiny*
+   near-perfect group and one *huge*, barely-improved group as if it were just as good
+   as a split that improves both groups substantially. What do you need to weight each
+   child's variance *by*, so that a split barely helping 95% of your data doesn't look
+   artificially good just because it perfectly isolates the other 5%? (Think about what
+   information you have available about each child group's size relative to the parent.)
+3. **Decide your stopping conditions — the second decision point.** `max_depth` is one
+   obvious one (a hyperparameter, stop recursing once you hit it). But think about what
+   should happen at a node where the target values are *already* identical, or where a
+   group has too few samples to split further at all (tie this to `min_samples_leaf`).
+   What happens to your recursion if you don't check for these before searching for a
+   next split — does the search itself still make sense, or is there nothing left to
+   search for?
+4. **Build and debug this against a small toy dataset first** (in `scripts/05_trees.py`)
+   — not the full powerlifting data, which would be far too slow to iterate against
+   while you're still finding recursion bugs.
+5. **Validate**: on that same toy dataset, compare your tree's predictions against
+   `sklearn.tree.DecisionTreeRegressor` with the same `max_depth`. Once it matches, turn
+   this into `tests/test_tree.py`, same pattern as your earlier model tests.
+6. **Run it on a small sample of your real features** (still in `scripts/05_trees.py`),
+   and manually inspect a few of the splits it chose — do they make physical sense
+   (e.g., does it split on `days_since_last_meet` roughly where you'd expect)?
+7. **Don't hand-write Random Forest itself.** Wrapping bagging and random feature
+   selection around your own tree is a fine stretch goal if you're enjoying this, but
+   it's completely reasonable to use `sklearn.ensemble.RandomForestRegressor` directly
+   in `scripts/05_trees.py`, on the output of `build_features()`. The learning payoff
+   here is understanding *why* averaging many overfit trees reduces variance — a
+   statistics insight, not a coding one — and re-implementing the bagging loop teaches
+   you comparatively little once you've built one tree.
+8. **Before moving to Phase 6**, answer (no code needed):
+   - Explain "pick the split that reduces variance the most" in your own words, without
+     using the word "impurity."
+   - Why does averaging predictions from many overfit (deep) trees reduce variance
+     instead of just averaging their overfitting too? Make sure you can explain the role
+     of randomness in which data and features each tree sees.
+
+### AI use here
+- "I wrote this recursive split function and it never terminates — before telling me the
+  fix, ask me questions to help me find my own bug." (Missing or wrong base cases in
+  recursion are extremely common here, and working through it yourself is worth more
+  than being handed the fix.)
+- Boilerplate for visualizing a tree (e.g., `sklearn.tree.plot_tree`) — not a learning
+  task, fine to have AI wire this up.
 
 ### Resources
 - StatQuest, "Decision Trees" and "Random Forest" video series (YouTube) — start here;
   genuinely the clearest visual explanation of splitting criteria and bagging anywhere.
 - ISLR, Ch. 8 (Tree-Based Methods) — the same material once you want the written/math
   version, still approachable.
-
-### AI use here
-- "I wrote this recursive split function and it never terminates — before telling me the
-  fix, ask me questions to help me find my own bug." (Missing/wrong base cases in
-  recursion are extremely common here, and working through it yourself is worth more
-  than being handed the fix.)
-- Boilerplate for visualizing a tree (e.g., `sklearn.tree.plot_tree`) — not a learning
-  task, fine to have AI wire this up.
-
-### Self-check
-- Explain "pick the split that reduces variance the most" in your own words, without
-  using the word "impurity."
-- Why does averaging predictions from many overfit (deep) trees reduce variance instead
-  of just averaging their overfitting too? (This is the core reason Random Forest works —
-  make sure you can explain the role of randomness in which data/features each tree sees.)
 
 ---
 
@@ -839,35 +850,60 @@ current prediction) that the trees before it made. Each tree's contribution gets
 down by a small **learning rate** before being added in, so no single tree can swing the
 prediction too far. XGBoost is a highly-optimized, regularized version of this same idea.
 
-### Build yourself
-1. Implement **simplified gradient boosting from scratch**, using
-   `sklearn.tree.DecisionTreeRegressor` as the small "weak learner" tree at each step
-   (you already understand trees from Phase 5 — no need to re-derive tree-building; the
-   new concept here is the *boosting loop* around it):
-   - start with a constant prediction (the overall mean of the target)
-   - fit a shallow tree to the current residuals (`actual − current_prediction`)
-   - update your running prediction: `prediction += learning_rate * tree.predict(X)`
-   - repeat for N rounds, recording the training error at each round
-2. Plot your training error dropping across boosting rounds (AI can give you the
-   plotting boilerplate) — watching this happen is far more convincing than reading
-   about it.
-3. Compare your final predictions/error against real `xgboost.XGBRegressor` trained with
-   the same number of rounds on the same data. They won't match exactly — real XGBoost
-   uses a more sophisticated update rule (it uses both the slope *and* the curvature of
-   the loss — a "second-order" approximation — plus extra penalty terms on the trees) —
-   but the overall error trend should land in the same ballpark.
+### Step-by-step
 
-### Where the code goes
-- Create `src/models/boosting.py` with `GradientBoostingScratch(n_estimators=,
-  learning_rate=, max_depth=)`, same `fit(X, y)` / `predict(X)` interface. Internally it
-  builds a list of `sklearn.tree.DecisionTreeRegressor` instances (one per round) — you
-  don't need `RegressionTreeScratch` from Phase 5 here, since the learning goal this
-  phase is the boosting loop itself, not re-proving the tree works.
-- Add `tests/test_boosting.py`: on a small dataset, assert training error strictly
-  decreases round-over-round (a weak but genuinely useful correctness check for a
-  boosting loop).
-- Do the round-by-round error plot and the real-`xgboost.XGBRegressor` comparison in
-  `scripts/06_boosting.py`.
+The training loop itself is fully specified below — the real decision point this phase
+is `predict()`, same category of question Phase 2 raised (what does this method need to
+reconstruct, given only what `fit()` chose to save?), just one level more involved since
+there's now a *list* of trees instead of one set of weights.
+
+1. **Create `src/models/boosting.py`** with `GradientBoostingScratch(n_estimators=,
+   learning_rate=, max_depth=)`, same `fit(X, y)` / `predict(X)` interface as everything
+   else. Internally it will build a list of `sklearn.tree.DecisionTreeRegressor`
+   instances, one per round — you don't need `RegressionTreeScratch` from Phase 5 here;
+   the new concept this phase is the *boosting loop* itself, not re-proving a tree works.
+2. **Implement `fit()`**:
+   - Start with a constant prediction: the overall mean of `y`. This needs to be saved
+     as instance state (e.g. `self.initial_prediction`) — think about why, given step 4.
+   - Loop for `n_estimators` rounds: fit a shallow `DecisionTreeRegressor` to the current
+     residuals (`actual − current_prediction`), update your running prediction with
+     `current_prediction += learning_rate * tree.predict(X)`, and store the fitted tree
+     in a list (e.g. `self.trees`).
+   - Track the training error (MAE or MSE, your call) at each round in a list, same
+     pattern as your gradient descent `loss_history`.
+3. **Now work out `predict(self, X)` yourself — this is the decision point.** `fit()`
+   only ever computed predictions for the *training* rows, incrementally, round by
+   round. `predict()` needs to produce predictions for *new* rows it's never seen,
+   starting from nothing. Given what you chose to store in step 2 (the initial mean, and
+   the list of fitted trees), how would you reconstruct the same final prediction for a
+   brand new `X`, without literally re-running the training loop? What do you need to
+   sum, and does the `learning_rate` still need to be applied at this stage?
+4. **Plot your training error dropping across boosting rounds** in
+   `scripts/06_boosting.py` (fine to have AI give you the plotting boilerplate) —
+   watching this happen is far more convincing than reading about it.
+5. **Write `tests/test_boosting.py`**: on a small dataset, assert training error
+   strictly decreases round-over-round — a weak but genuinely useful correctness check
+   for a boosting loop, and a good complement to the "does it match sklearn" tests
+   you've written for every model so far (this one you can't check that way, since
+   nothing here is meant to reproduce a closed-form answer exactly).
+6. **Compare against real `xgboost.XGBRegressor`**, trained with the same number of
+   rounds on the same data, in `scripts/06_boosting.py`. They won't match exactly — real
+   XGBoost uses both the slope *and* the curvature of the loss (a "second-order"
+   approximation) plus extra penalty terms on the trees — but the overall error trend
+   should land in the same ballpark.
+7. **Before moving to Phase 7**, answer (no code needed):
+   - Why does gradient boosting fit trees to *residuals* instead of the original target
+     each round?
+   - What goes wrong if `learning_rate` is too high? Too low? (Try both and watch,
+     rather than just predicting the answer.)
+   - In one sentence, what does real XGBoost add on top of the simplified version you
+     built?
+
+### AI use here
+- "Here's my boosting loop — walk through what should happen on round 1 vs. round 5, so
+  I can check my mental model matches what the code is actually doing."
+- Have AI scaffold a side-by-side comparison (your model's MAE vs. real XGBoost's MAE,
+  plotted together) — a repeatable reporting task, not a learning one.
 
 ### Resources
 - StatQuest's "Gradient Boost" series (4 parts, YouTube) — do this *before* the paper
@@ -878,19 +914,6 @@ prediction too far. XGBoost is a highly-optimized, regularized version of this s
   (2016, free on arXiv) — the actual algorithm's paper. Save this for after you have a
   working simplified version; the regularization terms and the curvature-based update
   will actually mean something to you by then, instead of being abstract notation.
-
-### AI use here
-- "Here's my boosting loop — walk through what should happen on round 1 vs. round 5, so
-  I can check my mental model matches what the code is actually doing."
-- Have AI scaffold a side-by-side comparison (your model's MAE vs. real XGBoost's MAE,
-  plotted together) — a repeatable reporting task, not a learning one.
-
-### Self-check
-- Why does gradient boosting fit trees to *residuals* instead of the original target
-  each round?
-- What goes wrong if `learning_rate` is too high? Too low? (Try both and watch, rather
-  than just predicting the answer.)
-- In one sentence, what does real XGBoost add on top of the simplified version you built?
 
 ---
 
@@ -907,32 +930,49 @@ has to respect the same rule as Phase 0: a given lifter's meets must always land
 entirely in one fold, never split across folds — otherwise you're back to leaking
 information about a lifter across train/validation.
 
-### Build yourself
-- Implement a manual grouped-K-fold loop by hand, once: split the *lifters* (not rows)
-  into K groups, then iterate holding one group out as validation each time. Doing this
-  once by hand means the mechanics are never a black box to you.
-- After that, switch to `sklearn.model_selection.GroupKFold` for convenience — no need
-  to keep hand-rolling this once you've verified you understand it.
-- Run a small grid search over your Ridge `λ` and your boosting `learning_rate` /
-  number-of-rounds, using this grouped CV setup.
+### Step-by-step
 
-### Where the code goes
-- Create `src/splits.py` with `grouped_kfold(pairs_df, k=5, group_col="Name")` — your
-  hand-rolled version, yielding `(train_idx, val_idx)` pairs the same way sklearn's
-  splitters do, so it's a drop-in stand-in while you're building it.
-- Once validated, the grid search itself is a good fit for its own script
-  (`scripts/07_cv_tuning.py`), looping your `RidgeScratch` and
-  `GradientBoostingScratch` (both already share the `fit`/`predict` interface, so the
-  same loop works for both) over `sklearn.model_selection.GroupKFold`.
+This phase is shorter than Phases 3-6, but it has its own decision point worth taking
+seriously rather than glossing over: what to do about lifters that don't divide evenly
+into `k` groups.
+
+1. **Create `src/splits.py`** with `grouped_kfold(pairs_df, k=5, group_col="Name")`,
+   yielding `(train_idx, val_idx)` pairs the same shape as sklearn's splitters, so it
+   can act as a drop-in stand-in while you're building it.
+2. **Get the unique list of group values** (lifter names) and decide how to assign each
+   one to a fold, 0 through `k-1`. **The decision point**: the number of lifters almost
+   certainly isn't evenly divisible by `k` — so some folds will end up with one more
+   lifter than others. What's a simple way to distribute lifters across `k` folds as
+   evenly as possible, given a list of `n` lifters? (Think about what a position `i` in a
+   shuffled list, combined with `k`, tells you about which fold it should land in — a
+   single arithmetic operator you've used before for something unrelated does this
+   cleanly.) Also decide: should the list of lifters be shuffled first, or left in
+   whatever order they naturally appear? What could go wrong if federation, country, or
+   competition era happens to correlate with the *order* lifters appear in your data,
+   and you didn't shuffle?
+3. **Implement the loop**: for each fold `i` from `0` to `k-1`, the *validation* set is
+   every row belonging to a lifter assigned to fold `i`; the *train* set is every row
+   belonging to every other lifter. `yield` (or collect) the row-index pairs, same shape
+   as Phase 0's `train_test_split_by_lifter`.
+4. **Verify it**, the same way you've verified every split so far: for one fold, confirm
+   `set(train_names) & set(val_names) == set()`, and confirm every lifter in your
+   dataset appears in *exactly one* validation fold across the whole k-fold run (not
+   zero, not two).
+5. **Switch to `sklearn.model_selection.GroupKFold`** for actual use from here on — no
+   need to keep hand-rolling this once step 4 confirms you understand the mechanics.
+6. **Run a small grid search** over your Ridge `λ` and your boosting `learning_rate` /
+   `n_estimators`, in its own script `scripts/07_cv_tuning.py`, using
+   `sklearn.model_selection.GroupKFold`. Since `RidgeScratch` and
+   `GradientBoostingScratch` already share the same `fit`/`predict` interface, the same
+   grid-search loop should work for both without needing to special-case either model.
+7. **Before moving to Phase 8**, answer (no code needed): why would ordinary
+   (ungrouped) K-fold CV give you an overly optimistic error estimate on this dataset
+   specifically?
 
 ### Resources
 - sklearn's [Cross-validation guide](https://scikit-learn.org/stable/modules/cross_validation.html) —
   read the "Cross-validation iterators for grouped data" section specifically; short and
   directly applicable.
-
-### Self-check
-- Why would ordinary (ungrouped) K-fold CV give you an overly optimistic error estimate
-  on this dataset specifically?
 
 ---
 
@@ -953,29 +993,49 @@ error is barely better than the naive baseline, that's evidence the outcomes in 
 subgroup are close to unpredictable from meet data alone (i.e., mostly noise, or driven
 by things you can't observe, like actual training details).
 
-### Build yourself
-- Compute MAE **and** the full error distribution (plot the residuals — don't just
-  report one number) **split by subgroup**: beginner vs. advanced lifters (using
-  `meet_number`), and by age band.
-- Implement a simple **bootstrap confidence interval** for your MAE by hand: resample
-  your test set with replacement N times (e.g., 1000), recompute MAE each time, and
-  report the spread (e.g., the 5th-95th percentile of those 1000 MAE values). This
-  directly answers "how confident are we in this number?" — a question most beginner ML
-  projects skip entirely, and a small, high-value exercise to have done by hand once.
-- Build your actual signal-vs-noise argument: compare your model's MAE against the
-  Phase 1 baseline's MAE, *per subgroup*. Wherever your model's advantage over the
-  baseline shrinks or disappears, that's your evidence of a noise floor in that subgroup.
+### Step-by-step
 
-### Where the code goes
-- Create `src/evaluate.py` with `subgroup_mae(actual, predicted, group_labels) ->
-  pd.DataFrame` and `bootstrap_mae_ci(actual, predicted, n_boot=1000) -> (low, high)`.
-  These get called once per model (baseline, ridge, boosting, ...) so writing them once
-  here and importing them is what actually pays off the "same `fit`/`predict` interface
-  everywhere" decision from the Project Structure section.
-- Do the residual plots and subgroup comparison tables in
-  `scripts/08_evaluation.py`, saving plots to `outputs/` and printing the subgroup
-  tables to the terminal — this script's output is essentially your project's results
-  section.
+The decision point this phase ties directly back to the theme that's run through the
+whole project: your test-set rows aren't independent of each other (one lifter
+contributes several rows), so the bootstrap needs to respect that, the same way every
+split has since Phase 0.
+
+1. **Create `src/evaluate.py`** with two functions: `subgroup_mae(actual, predicted,
+   group_labels) -> pd.DataFrame` and `bootstrap_mae_ci(actual, predicted, ...)`. These
+   get called once per model (baseline, ridge, boosting...), so writing them once here
+   and importing them is what actually pays off the "same `fit`/`predict` interface
+   everywhere" decision from the Project Structure section.
+2. **Implement `subgroup_mae`**: group your test predictions by beginner-vs-advanced
+   (using `meet_number`) and by age band, and compute MAE (reuse `mae()` from Phase 1)
+   within each group. Also plot the residual distribution per subgroup, not just the
+   summary number — a histogram is enough.
+3. **Now think before implementing `bootstrap_mae_ci` — this is the decision point.**
+   The standard bootstrap resamples individual data points with replacement. But your
+   test set rows aren't independent: several rows can belong to the same lifter, whose
+   trajectory has its own internal correlation (a lifter who's easy or hard to predict
+   tends to be so across several of their rows, not randomly row-by-row). If you
+   resample individual *rows*, does that respect the same non-independence concern
+   you've been guarding against since Phase 0's train/test split — or does it risk
+   quietly re-introducing it, just inside your uncertainty estimate instead of your
+   model? What would resampling *lifters* (and keeping each one's full set of rows
+   together every time they're drawn) do differently?
+4. **Implement `bootstrap_mae_ci`** using whichever resampling unit you decided on in
+   step 3: resample with replacement N times (e.g. 1000), recompute MAE each time on
+   the resampled set, and report the spread (e.g. the 5th-95th percentile across those
+   1000 MAE values).
+5. **Build your actual signal-vs-noise argument** in `scripts/08_evaluation.py`: compare
+   your model's MAE against the Phase 1 baseline's MAE, *per subgroup*, with confidence
+   intervals from step 4 on both. Wherever your model's advantage over the baseline
+   shrinks or disappears — especially once you account for the width of the confidence
+   intervals — that's your evidence of a noise floor in that subgroup. Save plots to
+   `outputs/`, print the subgroup tables to the terminal — this script's output is
+   essentially your project's results section.
+6. **Before moving to Phase 9 (or straight to Phase 10)**, answer (no code needed): if
+   beginner lifters have low MAE and advanced lifters have high MAE, is that necessarily
+   evidence of "less predictability" for advanced lifters — or could it be explained by
+   something else (e.g., fewer advanced-lifter examples in your data, or genuinely
+   higher variance in their true Δtotal)? Argue both sides before settling on a
+   conclusion.
 
 ### Resources
 - StatQuest, "Bootstrapping Main Ideas" (YouTube) — quick, intuitive intro before you
@@ -985,13 +1045,6 @@ by things you can't observe, like actual training details).
   not statisticians; a gentler read than a full statistics textbook.
 - ISLR, Ch. 5 — covers the bootstrap alongside cross-validation, consistent with the
   rest of your reading list.
-
-### Self-check
-- If beginner lifters have low MAE and advanced lifters have high MAE, is that
-  necessarily evidence of "less predictability" for advanced lifters — or could it be
-  explained by something else (e.g., fewer advanced-lifter examples in your data, or
-  genuinely higher variance in their true Δtotal)? Try to argue both sides before
-  settling on a conclusion.
 
 ---
 
@@ -1004,23 +1057,49 @@ how gradients flow through more complex models than Phase 2's straight line.
 ### Concept, in plain terms
 A neural network is, at its simplest, several linear-regression-style layers stacked
 with a nonlinear function in between (without that nonlinearity, stacking linear layers
-just collapses back into one big linear model — see the self-check below).
+just collapses back into one big linear model — see the last step below).
 **Backpropagation** is just the chain rule (same one from Phase 2) applied repeatedly,
 layer by layer, to figure out how much each weight in every layer contributed to the
 final error.
 
-### Build yourself
-- A single-hidden-layer network in raw numpy: forward pass, MSE loss, manual backprop
-  through one hidden layer, gradient descent update — same loop shape as Phase 2's
-  gradient descent, just with one more layer of chain rule.
-- Compare against a tiny `keras` or `pytorch` model with the same architecture, and check
-  that the losses decrease similarly.
+### Step-by-step
 
-### Where the code goes
-Create `src/models/neural_net.py` with the same `fit(X, y)` / `predict(X)` interface as
-every other model. Keep the `keras`/`pytorch` comparison model in
-`scripts/09_neural_net.py` rather than `src/` — it's a one-off validation check,
-not something the pipeline needs to call.
+Same tier as the rest of the plan: the overall loop shape is familiar from Phase 2, but
+getting the *shapes* of everything right, and handling the nonlinearity's own
+derivative, is left for you to reason through.
+
+1. **On paper, before code**: derive backpropagation through one hidden layer. This is
+   the same chain-rule exercise as Phase 2's gradient derivation, just applied twice in
+   a row (once for the output layer, once more for the hidden layer) — don't skip
+   straight to code here any more than you did in Phase 2.
+2. **Create `src/models/neural_net.py`** with the same `fit(X, y)` / `predict(X)`
+   interface as every other model. Decide on a hidden layer size (a hyperparameter,
+   e.g. `hidden_units=8`) as a constructor argument.
+3. **Work out your weight matrix shapes before writing the forward pass.** With
+   `n_features` inputs and `hidden_units` hidden neurons, what shape does the
+   first-layer weight matrix need to be so that `X @ W1` produces `hidden_units`
+   outputs per row? What shape does the second-layer weight matrix need to be to take
+   those `hidden_units` values back down to a single prediction? (Same shape-reasoning
+   habit Phase 2 and Phase 4 both required — work it out from the matrix multiplication
+   rule, don't guess.)
+4. **Implement the forward pass**: `X @ W1` (plus a bias), a nonlinearity (ReLU is the
+   simplest choice — look up its definition if unfamiliar), then `@ W2` (plus a second
+   bias) to produce the final prediction.
+5. **Implement backpropagation**, using your paper derivation from step 1. One thing to
+   watch for: the nonlinearity has its own derivative, and it isn't a constant — ReLU's
+   derivative is 1 where the input was positive and 0 where it was negative. If you
+   skip multiplying by this piecewise derivative during backprop, the hidden layer's
+   gradient will be wrong even if everything else is correct.
+6. **Implement the gradient descent update** — same loop shape as Phase 2's, just now
+   updating four things (`W1`, `b1`, `W2`, `b2`) instead of one weight vector.
+7. **Compare against a tiny `keras` or `pytorch` model** with the same architecture, in
+   `scripts/09_neural_net.py` (keep the comparison model here, not in `src/` — it's a
+   one-off validation check, not something the pipeline needs to call), and confirm the
+   losses decrease similarly.
+8. **Before wrapping up**, answer (no code needed): why does a network with only linear
+   activations collapse to being equivalent to plain linear regression, no matter how
+   many layers you stack? Ties directly back to Phase 2 — the nonlinearity from step 4
+   is the only thing that actually buys you anything beyond what you already built.
 
 ### Resources
 - Michael Nielsen, *Neural Networks and Deep Learning* (free online book,
@@ -1033,12 +1112,6 @@ not something the pipeline needs to call.
   backpropagation from a tiny scalar autograd engine up. Great once the above two clicks
   and you want the "computational graph" mental model; not the easiest starting point.
 
-### Self-check
-- Derive backpropagation through one hidden layer on paper before writing any code.
-- Why does a network with only linear activations collapse to being equivalent to plain
-  linear regression, no matter how many layers you stack? (This ties directly back to
-  Phase 2 — the nonlinearity is what actually buys you anything.)
-
 ---
 
 ## Phase 10 — Final Analysis & Writeup
@@ -1046,15 +1119,17 @@ not something the pipeline needs to call.
 **Where this fits:** this is the deliverable named at the bottom of
 `general-structure.md` — a model *and* an analysis answering the core question.
 
-### Build yourself
-- Write the final answer to the research question in `README.md`, backed by your
-  Phase 8 subgroup and bootstrap results — not just a vibe, an actual number-backed claim.
-- Include: baseline MAE vs. best model MAE, the per-subgroup breakdown, and an honest,
-  specific statement of where the noise floor seems to sit and why you believe that.
+### Step-by-step
 
-### Where the code goes
-Create `src/pipeline.py` — a single script that chains every module you've built into
-one runnable end-to-end pass, roughly:
+1. **Pick the model that goes into the final pipeline, and justify it with Phase 7's
+   numbers — not by feel.** You've now built four candidate models (baseline, ridge,
+   trees/forest, boosting) and have grouped-CV results for at least the tunable ones.
+   Which one actually wins, on the metric you care about, averaged across folds (not
+   just on whichever single split happened to look best)? Write the answer down before
+   moving to step 2 — this becomes part of your writeup, not just an implementation
+   detail.
+2. **Create `src/pipeline.py`** — a single script that chains every module you've built
+   into one runnable end-to-end pass, using the model you picked in step 1:
 
 ```python
 df = load_clean_data()                      # src/data.py
@@ -1071,9 +1146,14 @@ print(subgroup_mae(test_df["target"], predictions, groups))     # src/evaluate.p
 print(bootstrap_mae_ci(test_df["target"], predictions))         # src/evaluate.py
 ```
 
-Runnable as `python -m src.pipeline`. This is the moment all ten phases visibly become
-one program instead of a folder of separate exercises — and it's the script whose printed
-output you're transcribing into the `README.md` writeup.
+   Runnable as `python -m src.pipeline`. This is the moment all ten phases visibly
+   become one program instead of a folder of separate exercises.
+3. **Write the final answer to the research question in `README.md`**, backed by this
+   script's printed output and your Phase 8 subgroup/bootstrap results — not just a
+   vibe, an actual number-backed claim. Include: baseline MAE vs. best model MAE, the
+   per-subgroup breakdown, and an honest, specific statement of where the noise floor
+   seems to sit and why you believe that (referencing the confidence intervals from
+   Phase 8, not just point estimates).
 
 ### AI use here
 Entirely fine to have AI help copyedit/structure the writeup once you've drafted the
