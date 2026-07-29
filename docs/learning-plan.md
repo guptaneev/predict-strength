@@ -810,6 +810,28 @@ stop.
    here is understanding *why* averaging many overfit trees reduces variance — a
    statistics insight, not a coding one — and re-implementing the bagging loop teaches
    you comparatively little once you've built one tree.
+
+   ### Random Forest results (9 features: TotalKg, BodyweightKg, Age, meet_number,
+   ### days_since_last_meet, prev_total_change, bodyweight_change,
+   ### rolling_avg_change_last_3_meets, linear_trend_slope_last_N_meets)
+
+   | n_estimators | max_depth | min_samples_leaf | MAE |
+   |---|---|---|---|
+   | 100 | None (unlimited) | 1 (default) | 33.29kg |
+   | 200 | 10 | 20 | 32.07kg |
+   | 300 | 20 | 5 | 32.13kg |
+   | 200 | None (unlimited) | 50 | 31.93kg |
+   | **300** | **15** | **10** | **31.90kg** (best) |
+
+   Context: Ridge (same 9 features, λ=1) got 33.19kg; plain linear regression
+   (2 features) got 33.43kg. Default-settings Random Forest (33.29kg) barely beat
+   linear regression despite being far more flexible — classic sign of overfitting
+   with unlimited depth on individual trees. Constraining `max_depth`/`min_samples_leaf`
+   (regularizing each tree, same bias-variance idea as Ridge's λ) recovered a real,
+   if modest, improvement over Ridge: ~1.3kg / ~4% better than Ridge's best result so
+   far. Worth keeping in mind for Phase 8: even the best-tuned Random Forest here isn't
+   a dramatically better result than Ridge's — evidence leaning toward a real noise
+   floor in this data, not just "the earlier models weren't flexible enough."
 8. **Before moving to Phase 6**, answer (no code needed):
    - Explain "pick the split that reduces variance the most" in your own words, without
      using the word "impurity."
