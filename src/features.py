@@ -43,6 +43,62 @@ def build_features(pairs_df) -> pd.DataFrame:
     #
     pairs_df['linear_trend_slope_last_N_meets'] = grouped.apply(linear_trend_kgs).droplevel(0)
 
+    # --- attempt-level features (from the current meet's own attempts - not leakage,
+    # this is all known at the time of the meet being used to predict the NEXT one) ---
+
+    attempt_cols = [
+        'Squat1Kg', 'Squat2Kg', 'Squat3Kg',
+        'Bench1Kg', 'Bench2Kg', 'Bench3Kg',
+        'Deadlift1Kg', 'Deadlift2Kg', 'Deadlift3Kg',
+    ]
+    # negative attempt value = missed; NaN = attempt not taken, doesn't count as missed
+    pairs_df['missed_attempts_last_meet'] = (pairs_df[attempt_cols] < 0).sum(axis=1)
+
+    # opener -> best jump, per lift, then averaged across squat/bench/deadlift
+    lift_pct_gains = []
+    for opener_col, best_col in [
+        ('Squat1Kg', 'Best3SquatKg'),
+        ('Bench1Kg', 'Best3BenchKg'),
+        ('Deadlift1Kg', 'Best3DeadliftKg'),
+    ]:
+        opener = pairs_df[opener_col].abs()
+        pct_gain = (pairs_df[best_col] - opener) / opener
+        lift_pct_gains.append(pct_gain)
+
+    pairs_df['opener_to_best_pct_gain'] = pd.concat(lift_pct_gains, axis=1).mean(axis=1)
+
+    # attempt data is missing all-or-nothing per meet (some meets/federations only
+    # report best-lift summaries, not attempt-by-attempt data) - not random, so instead
+    # of dropping ~32% of rows, flag it and fill with a neutral value. Lets tree-based
+    # models learn to route around the filled value using the indicator.
+    pairs_df['has_attempt_data'] = pairs_df[attempt_cols].notna().any(axis=1).astype(int)
+    pairs_df['opener_to_best_pct_gain'] = pairs_df['opener_to_best_pct_gain'].fillna(0)
+
+    # 'Tested' only ever contains 'Yes' or NaN - NaN means not tested, by omission
+    pairs_df['is_tested'] = (pairs_df['Tested'] == 'Yes').astype(int)
+
+    # equipment category (one-hot) - Raw dropped as the baseline/reference category
+    equipment_dummies = pd.get_dummies(pairs_df['Equipment'], prefix='equipment', drop_first=True)
+    pairs_df = pd.concat([pairs_df, equipment_dummies.astype(int)], axis=1)
+
+    # did equipment change since the lifter's last meet - a switch (e.g. Raw -> Single-ply)
+    # would produce a large total jump that has nothing to do with "training progress"
+    pairs_df['equipment_changed'] = (
+        pairs_df['Equipment'] != grouped['Equipment'].shift(1)
+    ).astype(int)
+    # first meet has nothing to compare against - not a real "change", treat as 0
+    pairs_df.loc[grouped.cumcount() == 0, 'equipment_changed'] = 0
+
+    # --- placement / relative standing (from the current meet) ---
+
+    pairs_df['place_last_meet'] = pd.to_numeric(pairs_df['Place'], errors='coerce')
+
+    # percentile standing within the same competition, using Dots (bodyweight-normalized
+    # strength score) instead of raw Place - comparable across weight classes/divisions
+    # without needing to precisely reconstruct official placement categories
+    meet_id = pairs_df[['Date', 'MeetName', 'MeetTown', 'MeetCountry']].astype('string').fillna('').agg('|'.join, axis=1)
+    pairs_df['dots_percentile_in_meet'] = pairs_df.groupby(meet_id)['Dots'].rank(pct=True)
+
     return pairs_df
 
 def linear_trend_kgs(sliced_df, n=5) -> pd.Series:

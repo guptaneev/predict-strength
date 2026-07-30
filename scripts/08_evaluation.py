@@ -14,6 +14,11 @@ FEATURE_COLS = [
     'TotalKg', 'BodyweightKg', 'Age', 'meet_number', 'days_since_last_meet',
     'prev_total_change', 'bodyweight_change', 'rolling_avg_change_last_3_meets',
     'linear_trend_slope_last_N_meets',
+    'missed_attempts_last_meet', 'opener_to_best_pct_gain', 'has_attempt_data',
+    'is_tested',
+    'equipment_Raw', 'equipment_Single-ply', 'equipment_Unlimited', 'equipment_Wraps',
+    'equipment_changed',
+    'place_last_meet', 'dots_percentile_in_meet',
 ]
 
 pairs = pairs.dropna(subset=FEATURE_COLS + ['next_TotalKg'])
