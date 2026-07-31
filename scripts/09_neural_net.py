@@ -6,6 +6,7 @@ import torch.nn as nn
 
 from src.pairs import build_meet_pairs, train_test_split_by_lifter
 from src.features import build_features
+from src.metrics import mae
 from src.models.neural_net import NeuralNetScratch
 
 df = pd.read_csv('data/openpowerlifting_processed.csv', parse_dates=['Date'])
@@ -28,6 +29,10 @@ y_train = train_df['next_TotalKg'].to_numpy()
 # same requirement as gradient descent back in Phase 2
 X_mean, X_std = X_train.mean(axis=0), X_train.std(axis=0)
 X_train_scaled = (X_train - X_mean) / X_std
+
+X_test = test_df[FEATURE_COLS].to_numpy()
+y_test = test_df['next_TotalKg'].to_numpy()
+X_test_scaled = (X_test - X_mean) / X_std
 
 hidden_units = 8
 learning_rate = 0.1
@@ -63,6 +68,13 @@ for _ in range(n_iterations):
 
 print("scratch final loss (MSE):", model.loss_history[-1])
 print("pytorch final loss (MSE):", torch_loss_history[-1])
+
+scratch_predictions = model.predict(X_test_scaled)
+with torch.no_grad():
+    torch_predictions = torch_model(torch.tensor(X_test_scaled, dtype=torch.float32)).numpy().flatten()
+
+print("scratch test MAE:", mae(y_test, scratch_predictions))
+print("pytorch test MAE:", mae(y_test, torch_predictions))
 
 plt.plot(model.loss_history, label="scratch")
 plt.plot(torch_loss_history, label="pytorch")

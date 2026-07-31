@@ -2,3 +2,6 @@ data/openpowerlifting.csv
 data/openpowerlifting_processed.csv
 __pycache__/
 *.egg-info/
+outputs/
+.pytest_cache/
+docs/learning-plan.md
